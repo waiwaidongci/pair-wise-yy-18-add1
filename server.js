@@ -4,6 +4,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { randomUUID } = require('crypto');
 const config = require('./project.config');
+const createLineupStore = require('./lineupStore');
+const lineupRules = require('./lineupRules');
+const createTourAccess = require('./tourAccess');
 
 const app = express();
 const PORT = process.env.PORT || config.port;
@@ -188,6 +191,18 @@ function applyQuery(records, query) {
 
 initDb();
 
+const lineupStore = createLineupStore({ runSql, select, sqlValue, now, randomUUID });
+const tourAccess = createTourAccess({
+  loadRecord,
+  saveRecord,
+  insertEvent,
+  store: lineupStore,
+  rules: lineupRules,
+  now,
+  randomUUID
+});
+lineupStore.init();
+
 app.get('/health', (req, res) => {
   res.json({ ok: true, service: config.title, port: PORT });
 });
@@ -200,6 +215,9 @@ app.get('/api/meta', (req, res) => {
     examples: config.examples || []
   });
 });
+
+// 巡演装箱专用接入层（提交冻结 / 临场替换 / 确认 / 名单查询），须在通用 /:collection 路由之前挂载。
+app.use('/api/tourBoxes', tourAccess.router);
 
 app.get('/api/:collection', (req, res, next) => {
   try {
@@ -268,6 +286,9 @@ app.patch('/api/:collection/:id', (req, res, next) => {
     findCollection(req.params.collection);
     const record = loadRecord(req.params.collection, req.params.id);
     if (!record) return res.status(404).json({ error: 'not found' });
+    if (req.params.collection === 'tourBoxes') {
+      tourAccess.beforeBoxUpdate(record, req.body);
+    }
     const nextData = { ...record, ...req.body };
     delete nextData.id;
     delete nextData.collection;
@@ -285,6 +306,11 @@ app.patch('/api/:collection/:id', (req, res, next) => {
       note: req.body.note || '',
       data: req.body
     });
+    if (req.params.collection === 'tourBoxes') {
+      tourAccess.afterBoxUpdate(record, req.body, req.body.actor);
+    } else if (req.params.collection === 'puppetHeads' || req.params.collection === 'accessories') {
+      tourAccess.afterArchiveChange(req.params.collection, req.params.id, req.body.actor);
+    }
     res.json(loadRecord(req.params.collection, req.params.id));
   } catch (error) {
     next(error);
@@ -296,6 +322,9 @@ app.post('/api/:collection/:id/events', (req, res, next) => {
     const collectionConfig = findCollection(req.params.collection);
     const record = loadRecord(req.params.collection, req.params.id);
     if (!record) return res.status(404).json({ error: 'not found' });
+    if (req.params.collection === 'tourBoxes') {
+      tourAccess.beforeBoxUpdate(record, req.body);
+    }
     const status = req.body.status || record.status;
     if (collectionConfig.statuses && !collectionConfig.statuses.includes(status)) {
       return res.status(400).json({ error: 'invalid status: ' + status });
@@ -315,6 +344,11 @@ app.post('/api/:collection/:id/events', (req, res, next) => {
       note: req.body.note || '',
       data: req.body
     });
+    if (req.params.collection === 'tourBoxes') {
+      tourAccess.afterBoxUpdate(record, req.body, req.body.actor);
+    } else if (req.params.collection === 'puppetHeads' || req.params.collection === 'accessories') {
+      tourAccess.afterArchiveChange(req.params.collection, req.params.id, req.body.actor);
+    }
     res.json(loadRecord(req.params.collection, req.params.id));
   } catch (error) {
     next(error);
@@ -346,6 +380,11 @@ app.get('/api/:collection/:id/timeline', (req, res, next) => {
 app.delete('/api/:collection/:id', (req, res, next) => {
   try {
     findCollection(req.params.collection);
+    if (req.params.collection === 'tourBoxes') {
+      tourAccess.afterBoxDelete(req.params.id);
+    } else if (req.params.collection === 'puppetHeads' || req.params.collection === 'accessories') {
+      tourAccess.afterArchiveChange(req.params.collection, req.params.id, '');
+    }
     runSql('DELETE FROM records WHERE collection = ' + sqlValue(req.params.collection) + ' AND id = ' + sqlValue(req.params.id) + ';');
     runSql('DELETE FROM events WHERE record_id = ' + sqlValue(req.params.id) + ';');
     res.status(204).end();

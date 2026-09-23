@@ -71,6 +71,10 @@ module.exports = {
   examples: [
     'GET /api/puppetHeads?play=火焰山&status=可演出 查询某剧目可用偶头',
     'POST /api/tourBoxes 创建巡演装箱单',
+    'POST /api/tourBoxes/:id/submit 提交巡演并按身位冻结偶头/配件快照',
+    'POST /api/tourBoxes/:id/replacements 临场替换（须同剧目同角色且可演出，原占位不得再次分配）',
+    'POST /api/tourBoxes/:id/replacements/:replacementId/confirm 确认替换（未确认不能结案）',
+    'GET /api/tourBoxes/:id/lineup 查看生效阵容名单与历史版本',
     'POST /api/lossReports 登记返场缺损或遗失'
   ]
 };
